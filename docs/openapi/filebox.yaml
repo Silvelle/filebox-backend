@@ -7,10 +7,25 @@ servers:
 security:
   - cookieAuth: []
 paths:
+  /auth/csrf:
+    get:
+      tags: [auth]
+      operationId: getCsrfToken
+      summary: Ensure the browser has a CSRF token
+      security: []
+      responses:
+        '204':
+          description: The CSRF cookie is available. No response body.
+          headers:
+            Set-Cookie:
+              description: Sets the XSRF-TOKEN cookie if needed.
+              schema:
+                type: string
   /auth/login:
     post:
       tags: [auth]
       operationId: login
+      description: An unknown email and an incorrect password return the same generic 401 response.
       security: []
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
@@ -31,6 +46,149 @@ paths:
           $ref: '#/components/responses/Problem'
         '429':
           $ref: '#/components/responses/Problem'
+  /auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Account created. Sets the SESSION cookie.
+          headers:
+            Set-Cookie:
+              description: Sets the SESSION cookie for the new account.
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '204':
+          description: The current session was ended. Other sessions remain active.
+  /account:
+    get:
+      tags: [account]
+      operationId: getUser
+      summary: Get the signed-in user's account
+      responses:
+        '200':
+          description: Current details about user including quota data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountDetails'
+        '401':
+          $ref: '#/components/responses/Problem'
+    patch:
+      tags: [account]
+      operationId: updateAccount
+      summary: Update user's displayed name.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAccountRequest'
+      responses:
+        '204':
+          description: Display name updated successfully.
+        '401':
+          $ref: '#/components/responses/Problem'
+  /account/password:
+    summary: Update user's password.
+    post:
+      tags: [password]
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      operationId: updateUserPassword
+      summary: Update user's password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePasswordRequest'
+      responses:
+        '204':
+          description: Password changed successfully. Other sessions were revoked.
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+  /account/sessions:
+    get:
+      tags: [sessions]
+      operationId: listSessions
+      summary: List the signed-in user's sessions.
+      responses:
+        '200':
+          description: Active sessions for signed-in users.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AccountSession'
+        '401':
+          $ref: '#/components/responses/Problem'
+    delete:
+      tags: [sessions]
+      operationId: revokeOtherSessions
+      summary: Sign out all other sessions.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '204':
+          description: Other sessions were revoked. The current session remains active.
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+  /account/sessions/{id}:
+    delete:
+      tags: [sessions]
+      operationId: revokeSession
+      summary: Sign out one session.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The session's management ID from the session list.
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '204':
+          description: The selected session was revoked.
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+          description: No session with that ID belongs to the signed-in user.
 components:
   securitySchemes:
     cookieAuth:
@@ -53,6 +211,16 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
   schemas:
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
     LoginRequest:
       type: object
       required: [email, password]
@@ -61,6 +229,16 @@ components:
           type: string
           format: email
         password:
+          type: string
+          format: password
+    UpdatePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+          format: password
+        newPassword:
           type: string
           format: password
     Account:
@@ -79,6 +257,43 @@ components:
           type: boolean
         hasPassword:
           type: boolean
+    AccountDetails:
+      allOf:
+        - $ref: '#/components/schemas/Account'
+        - type: object
+          required: [displayName, quota]
+          properties:
+            quota:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Storage quota in bytes.
+    UpdateAccountRequest:
+      type: object
+      required: [displayName]
+      additionalProperties: false
+      properties:
+        displayName:
+          type: string
+    AccountSession:
+      type: object
+      required: [id, device, createdAt, lastActivatedAt, current]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Management ID, not the secret SESSION cookie value.
+        device:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        lastActivatedAt:
+          type: string
+          format: date-time
+          description: When the session was last active.
+        current:
+          type: boolean
     Problem:
       type: object
       required: [type, title, status, code]
@@ -94,4 +309,3 @@ components:
           description: Stable machine-readable code, e.g. invalid_credentials
         requestId:
           type: string
-  
